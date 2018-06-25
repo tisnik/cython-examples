@@ -1,0 +1,1242 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+<head>
+<title>Praktické použití nástroje Cython při překladu Pythonu do nativního kódu</title>
+<meta name="Author" content="Pavel Tisnovsky" />
+<meta name="Generator" content="vim" />
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<style type="text/css">
+         body {color:#000000; background:#ffffff;}
+         h1  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#c00000; text-align:center; padding-left:1em}
+         h2  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#0000c0; padding-left:1em; text-align:left}
+         h3  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#c0c0c0; padding-left:1em; text-align:left}
+         h4  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#e0e0e0; padding-left:1em; text-align:left}
+         a   {font-family: arial, helvetica, sans-serif;}
+         li  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ol  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ul  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         p   {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify;}
+         pre {background:#e0e0e0}
+</style>
+</head>
+
+<body>
+
+<h1>Praktické použití nástroje Cython při překladu Pythonu do nativního kódu</h1>
+
+<h3>Pavel Tišnovský</h3>
+
+<p></p>
+
+<h1>Úvodník</h1>
+
+<p>Na závěr si ukážeme výslednou podobu programu pro výpočet Mandelbrotovy množiny, jehož rychlost bude plně srovnatelná s čistě céčkovou variantou.</p>
+
+
+
+<h2>Obsah</h2>
+
+<p><a href="#k01">1. Praktické použití nástroje Cython při překladu Pythonu do nativního kódu</a></p>
+<p><a href="#k02">2. Postupné úpravy jednoduché funkce pro součet dvou celých čísel</a></p>
+<p><a href="#k03">3. Soubor Makefile pro řízení překladu funkcí z&nbsp;Pythonu do nativního kódu</a></p>
+<p><a href="#k04">4. Přímý překlad Pythonovské funkce bez přidání typových informací</a></p>
+<p><a href="#k05">5. Proč Cython používá <strong>PyObject *</strong> aneb problematika dynamického typového systému</a></p>
+<p><a href="#k06">6. Použití deklarace <strong>cdef</strong> namísto <strong>def</strong></a></p>
+<p><a href="#k07">7. Přidání informace o typech parametrů funkce pro součet celých čísel</a></p>
+<p><a href="#k08">8. Přidání informace o návratovém typu funkce pro součet celých čísel</a></p>
+<p><a href="#k09">9. Zákaz volání funkcí souvisejících s&nbsp;GILem</a></p>
+<p><a href="#k10">10. Náhrada Pythonovské funkce <strong>print</strong> za funkci <strong>printf</strong></a></p>
+<p><a href="#k11">*** 11. Pythonovské seznamy a céčková pole</a></p>
+<p><a href="#k12">*** 12. </a></p>
+<p><a href="#k13">*** 13. </a></p>
+<p><a href="#k14">14. Předchozí varianta benchmarku a oblasti, kde je možné provést optimalizace</a></p>
+<p><a href="#k15">*** 15. Použití pole s&nbsp;barvovou paletou, odstranění kontrol při dělení</a></p>
+<p><a href="#k16">*** 16. Náhrada <strong>print</strong> za <strong>printf</strong> a odstranění GIL</a></p>
+<p><a href="#k17">*** 17. Finální podoba benchmarku, srovnání s&nbsp;variantou naprogramovanou v&nbsp;céčku</a></p>
+<p><a href="#k18">*** 18. Výsledky všech benchmarků</a></p>
+<p><a href="#k19">*** 19. Repositář s&nbsp;demonstračními příklady</a></p>
+<p><a href="#k20">20. Odkazy na Internetu</a></p>
+
+
+
+<p><a name="k01"></a></p>
+<h2 id="k01">1. Praktické použití nástroje Cython při překladu Pythonu do nativního kódu</h2>
+
+<p>V&nbsp;dnešním článku, který poměrně úzce navazuje na <a
+href="https://www.root.cz/clanky/rpython-vs-cython-aneb-dvoji-pristup-k-prekladu-pythonu-do-nativniho-kodu/">článek
+porovnávající RPython s&nbsp;Cythonem</a>, si ukážeme, jak se Cython používá
+prakticky. Připomeňme si, že tento nástroj slouží k&nbsp;převodu (takzvané
+<i>transkompilaci/transpřekladu</i>) zdrojových kódů napsaných v&nbsp;Pythonu
+(popř.&nbsp;nadmnožině tohoto jazyka) do zdrojového kódu určeného pro překlad
+standardními překladači céčka. Výsledkem může být buď dynamická knihovna plně
+využitelná v&nbsp;CPythonu (standardním interpretru jazyka Python) nebo
+spustitelná aplikace, kterou je možné dále používat popř.&nbsp;distribuovat
+(ovšem s&nbsp;některými omezeními popsanými dále). Cython sice přeloží i běžné
+zdrojové kódy Pythonu, ovšem jak uvidíme v&nbsp;dalších kapitolách, přináší to
+s&nbsp;sebou některá omezení &ndash; výsledný kód není příliš efektivní, a to
+ani z&nbsp;hlediska jeho velikosti ani z&nbsp;pohledu rychlosti. Pro zajištění
+lepší efektivity je zapotřebí zdrojové kódy upravit &ndash; a právě tato
+problematika je ústředním tématem dnešního článku.</p>
+
+<a href="https://www.root.cz/obrazek/332506/"><img src="https://i.iinfo.cz/images/529/rpython-cpython-3-prev.png" class="image-332506" alt="&#160;" width="363" height="270" /></a>
+<p><i>Obrázek 1: Porovnání doby výpočtu Mandelbrotovy množiny RPythonem,
+Cythonem (bez i s&nbsp;type hinty) a variantou naprogramovanou přímo
+v&nbsp;ANSI C. Z&nbsp;tohoto grafu je dobře patrné, jak důležité je pro Cython
+mít k&nbsp;dispozici o typech proměnných, parametrů a návratových kódů
+funkcí.</i></p>
+
+<p><div class="rs-tip-major">Poznámka: ve skutečnosti dokážeme po přečtení
+tohoto článku dobu výpočtu Mandelbrotovy množiny (viz předchozí graf) ještě
+snížit a přiblížit se tak čistě céčkové implementaci!</div></p>
+
+
+
+<p><a name="k02"></a></p>
+<h2 id="k02">2. Postupné úpravy jednoduché funkce pro součet dvou celých čísel</h2>
+
+<p>Základní koncepty, na kterých je založeno mnoho optimalizací prováděných
+Cythonem (pokud ovšem tomuto transpřekladači vhodným způsobem pomůžeme), je
+možné vysvětlit na funkci sloužící pro součet dvou celých čísel. Programovací
+jazyk Python většina programátorů používá mj.&nbsp;i kvůli jeho jednouše
+použitelnému typovému systému, takže funkci pro součet mohou bez větší námahy
+zapsat například takto:</p>
+
+<pre>
+def <strong>add_two_numbers</strong>(x, y):
+    return x + y
+</pre>
+
+<p>Ve skutečnosti však samozřejmě tato funkce může provádět i mnoho dalších
+operací na základě konkrétních typů parametrů, které jsou funkci předávány. A
+právě zde leží základní problém, který musí řešit jak Cython, tak i již zmíněný
+RPython &ndash; aby byla tato funkce skutečně přeložena optimálně
+(v&nbsp;podstatě jen jedinou instrukcí <strong>add</strong> následovanou
+instrukcí <strong>ret</strong>), musíme dynamický typový systém Pythonu
+v&nbsp;tomto konkrétním případě omezit a stanovit jak typy parametrů, tak i
+návratový typ. Navíc, jak uvidíme dále, je možné v&nbsp;této funkci zcela
+vyloučit GIL (<i>Global Interpreter Lock</i>) a tak výslednou céčkovou funkci
+ještě zkrátit a zrychlit.</p>
+
+<p>Postupně si tedy ukážeme vliv těchto dílčích kroků:</p>
+
+<ol>
+<li>Deklarace typů parametrů funkce</li>
+<li>Deklarace návratového typu</li>
+<li>Odstranění použití GIL (prolog a epilog ve funkci)</li>
+</ol>
+
+
+
+<p><a name="k03"></a></p>
+<h2 id="k03">3. Soubor Makefile pro řízení překladu funkcí z&nbsp;Pythonu do nativního kódu</h2>
+
+<p>Před popisem jednotlivých (celkem šesti) variant funkce určené pro součet
+dvou čísel si ukažme, jakým způsobem vlastně budeme provádět překlad. Již víme,
+že celý překlad probíhá ve třech krocích:</p>
+
+<ol>
+<li>Transpřeklad zdrojového kódu napsaného v&nbsp;Pythonu do programovacího jazyka C</li>
+<li>Překlad kódu z&nbsp;jazyka C do tzv.&nbsp;objektového kódu (de facto strojový kód s&nbsp;relativními adresami)</li>
+<li>Slinkování objektového kódu s&nbsp;knihovnami a vytvoření spustitelné aplikace</li>
+</ol>
+
+<p>Ze zdrojového kódu napsaného v&nbsp;Pythonu (či jeho nadstavbě) postupně
+vzniknou tři další soubory:</p>
+
+<pre>
+soubor.py &rarr; soubor.c &rarr; objektový_kód.o &rarr; nativní spustitelná aplikace
+</pre>
+
+<p>Celý řetězec zpracování bude řízen souborem <strong>Makefile</strong>, který
+vypadá následovně (jeho jednotlivé části budou popsány pod výpisem):</p>
+
+<pre>
+PYTHON=python3
+COMPILER=gcc
+LINKER=gcc
+&nbsp;
+CFLAGS=-O9
+&nbsp;
+INCLUDE_DIR:=$(shell $(PYTHON) -c "from distutils import sysconfig; print(sysconfig.get_python_inc())")
+LIBRARY_DIR:=$(shell $(PYTHON) -c "from distutils import sysconfig; print(sysconfig.get_config_var('LIBDIR'))")
+PYTHON_LIB:=$(shell $(PYTHON) -c "from distutils import sysconfig; print(sysconfig.get_config_var('LIBRARY')[3:-2])")
+SYSLIBS:=$(shell $(PYTHON) -c "from distutils import sysconfig; print(sysconfig.get_config_var('SYSLIBS'))")
+&nbsp;
+&nbsp;
+all:    add_numbers_1 \
+        add_numbers_2 \
+        add_numbers_3 \
+        add_numbers_4 \
+        add_numbers_5 \
+        add_numbers_7
+&nbsp;
+&nbsp;
+.PHONY: clean
+&nbsp;
+<i># Výsledky překladu do C chceme ponechat i po doběhnutí Make</i>
+.PRECIOUS: %.c
+&nbsp;
+clean:
+        rm -f *.o \
+        rm -f *.c \
+        rm -f add_numbers_[1-5]
+&nbsp;
+&nbsp;
+<i># Pravidlo pro slinkovani vsech objektovych souboru a vytvoreni</i>
+<i># vysledne spustitelne aplikace.</i>
+%:      %.o
+        $(LINKER) -o $@ -L$(LIBRARY_DIR) -l$(PYTHON_LIB) $(SYSLIBS) $&lt;
+&nbsp;
+&nbsp;
+<i># Pravidlo pro preklad kazdeho zdrojoveho souboru v C do prislusneho</i>
+<i># objektoveho souboru.</i>
+%.o:    %.c
+        $(COMPILER) $(CFLAGS) -I$(INCLUDE_DIR) -c $&lt; -o $@
+&nbsp;
+&nbsp;
+<i># Pravidlo pro preklad kazdeho zdrojoveho souboru v Pythonu nebo Cythonu</i>
+<i># do prislusneho souboru C</i>
+%.c:    %.py
+        cython -a --embed $&lt;
+&nbsp;
+%.c:    %.pyx
+        cython -a --embed $&lt;
+</pre>
+
+<p>Některé části Makefile jsou snadno pochopitelné. Jedná se zejména o pravidla
+pro transpřeklad zdrojových kódů s&nbsp;koncovkou <strong>.py</strong> nebo
+<strong>.pyx</strong> do céčkových souborů s&nbsp;koncovkou
+<strong>.c</strong>. Přepínač <strong>--embed</strong> zajistí vygenerování
+kódu funkce <strong>main</strong>, přepínač <strong>-a</strong> pak vytvoření
+HTML souboru, jehož význam si ukážeme dále.</p>
+
+<p>Podobně je zde deklarováno pravidlo pro překlad céčkových souborů
+<strong>.c</strong> do objektového kódu <strong>.o</strong>. Zde musíme použít
+informaci o tom, kde se nachází hlavičkové soubory Pythonu &ndash; důvod jsme
+si <a
+href="https://www.root.cz/clanky/rpython-vs-cython-aneb-dvoji-pristup-k-prekladu-pythonu-do-nativniho-kodu/#k14">vysvětlili
+zde</a>. Další pravidlo určuje slinkování <strong>.o</strong> do spustitelné
+aplikace, opět s&nbsp;přidáním všech důležitých informací (umístění systémových
+knihoven apod.)</p>
+
+<p>Následující deklarace zajistí, že nástroj <strong>make</strong> nebude mazat
+soubory *.c, které vznikly aplikací implicitních pravidel. Pokud tuto deklaraci
+zakomentujete, smaže utilita <strong>make</strong> na závěr nejenom všechny
+objektové soubory, ale i transpřeložené zdrojové kódy v&nbsp;céčku, které sice
+již nebudou zapotřebí, ale my je budeme chtít později prozkoumat:</p>
+
+<pre>
+.PRECIOUS: %.c
+</pre>
+
+
+
+<p><a name="k04"></a></p>
+<h2 id="k04">4. Přímý překlad Pythonovské funkce bez přidání typových informací</h2>
+
+<p>Pokusme se nyní přeložit první variantu funkce pro součet dvou celých čísel.
+Zdrojový kód s&nbsp;deklarací této funkce i s&nbsp;příkladem jejího volání
+naleznete na adrese <a
+href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_1.py">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_1.py</a>:</p>
+
+<pre>
+def <strong>add_two_numbers</strong>(x, y):
+    return x + y
+&nbsp;
+&nbsp;
+z = add_two_numbers(123, 456)
+print(z)
+</pre>
+
+<p>Výsledkem překladu bude spustitelný soubor &bdquo;add_numbers_1&ldquo;,
+ovšem nás nyní budou zajímat další dva vytvořené soubory nazvané
+&bdquo;add_numbers_1.c&ldquo; a &bdquo;add_numbers_1.html&ldquo;. První
+z&nbsp;těchto souborů obsahuje zdrojový kód v&nbsp;céčku, jehož překladem a
+slinkováním vznikla výsledná spustitelná aplikace, druhý soubor pak obsahuje
+zajímavé informace o tom, jakým způsobem Cython program přeložil a především
+pak, na kterých místech by bylo vhodné provést úpravy s&nbsp;určením datových
+typů atd. Obsah tohoto souboru vypadá takto:</p>
+
+*** image ***
+<p><i>Obrázek 2: Část HTML souboru &bdquo;add_numbers_1.html&ldquo; vytvořeného
+Cythonem. Žlutě označené řádky označují ty bloky kódu, o nichž Cython nemá
+typové informace a které musel přeložit dosti neefektivním způsobem simulujícím
+chování interpretru Pythonu.</i></p>
+
+<p>Lepší však bude, když si celý soubor přímo <a class="rs-file file-html"
+href="https://i.iinfo.cz/files/root/58/cython-add-numbers-1.html">otevřete
+v&nbsp;prohlížeči</a>, protože umožňuje interaktivní rozbalování jednotlivých
+přeložených řádků (kliknutím na znak + umístěný v&nbsp;prvním sloupci,
+popř.&nbsp;na libovolný řádek se žlutým podsvícením).</p>
+
+
+
+<p><a name="k05"></a></p>
+<h2 id="k05">5. Proč Cython používá <strong>PyObject *</strong> aneb problematika dynamického typového systému</h2>
+
+<p>Zdrojový (céčkový) kód vygenerovaný Cythonem je poměrně nečitelný (alespoň
+prozatím!), a to mj.&nbsp;i z&nbsp;toho důvodu, že oba dva parametry funkce
+<strong>add_two_numbers</strong> i její návratová hodnota jsou představovány
+ukazateli na struktury typu <strong>PyObject</strong>. Cython totiž nemá
+k&nbsp;dispozici žádné informace o tom, jakého typu parametry budou a tak musí
+předpokládat, že se funkce bude volat s&nbsp;celými čísly, čísly
+s&nbsp;plovoucí řádovou čárkou, seznamy, n-ticemi, řetězci či dokonce
+s&nbsp;instancemi tříd, které mají předefinovánu speciální metodu
+<strong>__add__</strong> (jinými slovy se všemi typy, u kterých má smysl
+používat operátor +).</p>
+
+<p>Ostatně se stačí podívat na následující demonstrační příklad, v&nbsp;němž je
+naše funkce volána s&nbsp;různými typy parametrů (z&nbsp;čehož mj.&nbsp;plyne i
+to, že její název je dosti zavádějící):</p>
+
+<pre>
+def <strong>add_two_numbers</strong>(x, y):
+    return x + y
+&nbsp;
+&nbsp;
+class <strong>Foo</strong>:
+    def <strong>__init__</strong>(self, value):
+        self._value = value
+&nbsp;
+    def <strong>__add__</strong>(self, other):
+        return Foo(self._value + other._value)
+&nbsp;
+    def <strong>__str__</strong>(self):
+        return "*" * self._value
+&nbsp;
+&nbsp;
+def <strong>test_adding</strong>():
+    f1 = Foo(1)
+    f2 = Foo(2)
+&nbsp;
+    print(add_two_numbers(123, 456))
+    print(add_two_numbers("foo", "bar"))
+    print(add_two_numbers([1,2,3], [4,5,6]))
+    print(add_two_numbers((1,2,3), (4,5,6)))
+    print(add_two_numbers(f1, f2))
+&nbsp;
+&nbsp;
+test_adding()
+</pre>
+
+<p>Po spuštění příkladu dostaneme následující řádky, které ukazují, že se +
+skutečně dá použít s&nbsp;různými datovými typy:</p>
+
+<pre>
+579
+foobar
+[1, 2, 3, 4, 5, 6]
+(1, 2, 3, 4, 5, 6)
+***
+</pre>
+
+<p>Zkusme si příklad ještě dále upravit &ndash; podíváme se na bajtkód, který
+bude interpretován Pythonem (bajtkód se vytváří vždy, i když se nemusí ukládat
+na disk):</p>
+
+<pre>
+import dis
+&nbsp;
+dis.dis(add_two_numbers)
+dis.dis(test_adding)
+</pre>
+
+<p>Funkce <strong>add_two_numbers</strong> je přeložena do čtyř instrukcí,
+které ovšem neobsahují řádné informace o typech operandů (na rozdíl od bajtkódu
+JVM, kde existuje například instrukce <strong>IADD</strong>,
+<strong>FADD</strong>, <strong>DADD</strong> apod.):</p>
+
+<pre>
+  4           0 LOAD_FAST                0 (x)
+              3 LOAD_FAST                1 (y)
+              6 BINARY_ADD
+              7 RETURN_VALUE
+</pre>
+
+<p>Příklad volání funkce s&nbsp;předáním dvou celočíselných parametrů. Toto je
+varianta bajtkódu pro Python 2, který obsahuje <strong>print</strong> jako
+příkaz a tudíž pro něj existuje i odpovídající instrukce v&nbsp;bajtkódu:</p>
+
+<pre>
+ 22          24 LOAD_GLOBAL              1 (add_two_numbers)
+             27 LOAD_CONST               3 (123)
+             30 LOAD_CONST               4 (456)
+             33 CALL_FUNCTION            2
+             36 PRINT_ITEM
+             37 PRINT_NEWLINE
+</pre>
+
+<p>Celý bajtkód pro Python 2 vypadá následovně (poznámky jsem dopsal
+ručně):</p>
+
+<pre>
+<i># tělo funkce add_two_numbers()</i>
+  4           0 LOAD_FAST                0 (x)
+              3 LOAD_FAST                1 (y)
+              6 BINARY_ADD
+              7 RETURN_VALUE
+&nbsp;
+<i># f1 = Foo(1)</i>
+ 19           0 LOAD_GLOBAL              0 (Foo)
+              3 LOAD_CONST               1 (1)
+              6 CALL_FUNCTION            1
+              9 STORE_FAST               0 (f1)
+&nbsp;
+<i># f2 = Foo(2)</i>
+ 20          12 LOAD_GLOBAL              0 (Foo)
+             15 LOAD_CONST               2 (2)
+             18 CALL_FUNCTION            1
+             21 STORE_FAST               1 (f2)
+&nbsp;
+<i># součet dvou celých čísel</i>
+ 22          24 LOAD_GLOBAL              1 (add_two_numbers)
+             27 LOAD_CONST               3 (123)
+             30 LOAD_CONST               4 (456)
+             33 CALL_FUNCTION            2
+             36 PRINT_ITEM
+             37 PRINT_NEWLINE
+&nbsp;
+<i># spojení dvou řetězců</i>
+ 23          38 LOAD_GLOBAL              1 (add_two_numbers)
+             41 LOAD_CONST               5 ('foo')
+             44 LOAD_CONST               6 ('bar')
+             47 CALL_FUNCTION            2
+             50 PRINT_ITEM
+             51 PRINT_NEWLINE
+&nbsp;
+<i># konstrukce dvou seznamů s jejich následným spojením</i>
+ 24          52 LOAD_GLOBAL              1 (add_two_numbers)
+             55 LOAD_CONST               1 (1)
+             58 LOAD_CONST               2 (2)
+             61 LOAD_CONST               7 (3)
+             64 BUILD_LIST               3
+             67 LOAD_CONST               8 (4)
+             70 LOAD_CONST               9 (5)
+             73 LOAD_CONST              10 (6)
+             76 BUILD_LIST               3
+             79 CALL_FUNCTION            2
+             82 PRINT_ITEM
+             83 PRINT_NEWLINE
+&nbsp;
+<i># konstrukce dvou n-tic s jejich následným spojením</i>
+ 25          84 LOAD_GLOBAL              1 (add_two_numbers)
+             87 LOAD_CONST              11 ((1, 2, 3))
+             90 LOAD_CONST              12 ((4, 5, 6))
+             93 CALL_FUNCTION            2
+             96 PRINT_ITEM
+             97 PRINT_NEWLINE
+&nbsp;
+<i># "spojení" dvou instancí třídy Foo</i>
+ 26          98 LOAD_GLOBAL              1 (add_two_numbers)
+            101 LOAD_FAST                0 (f1)
+            104 LOAD_FAST                1 (f2)
+            107 CALL_FUNCTION            2
+            110 PRINT_ITEM
+            111 PRINT_NEWLINE
+&nbsp;
+<i># ukončení funkce main</i>
+            112 LOAD_CONST               0 (None)
+            115 RETURN_VALUE
+</pre>
+
+<p>Příklad volání funkce s&nbsp;předáním dvou celočíselných parametrů. Toto je
+varianta bajtkódu pro Python 3, v&nbsp;němž je <strong>print</strong> běžnou
+funkcí:</p>
+
+<pre>
+ 22          24 LOAD_GLOBAL              1 (print)
+             27 LOAD_GLOBAL              2 (add_two_numbers)
+             30 LOAD_CONST               3 (123)
+             33 LOAD_CONST               4 (456)
+             36 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+             39 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+             42 POP_TOP
+</pre>
+
+<p>Opět si ukažme celý bajtkód pro Python 3 (poznámky jsem dopsal ručně):</p>
+
+<pre>
+<i># tělo funkce add_two_numbers()</i>
+  4           0 LOAD_FAST                0 (x)
+              3 LOAD_FAST                1 (y)
+              6 BINARY_ADD
+              7 RETURN_VALUE
+&nbsp;
+<i># f1 = Foo(1)</i>
+ 19           0 LOAD_GLOBAL              0 (Foo)
+              3 LOAD_CONST               1 (1)
+              6 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+              9 STORE_FAST               0 (f1)
+&nbsp;
+<i># f2 = Foo(2)</i>
+ 20          12 LOAD_GLOBAL              0 (Foo)
+             15 LOAD_CONST               2 (2)
+             18 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+             21 STORE_FAST               1 (f2)
+&nbsp;
+<i># součet dvou celých čísel</i>
+ 22          24 LOAD_GLOBAL              1 (print)
+             27 LOAD_GLOBAL              2 (add_two_numbers)
+             30 LOAD_CONST               3 (123)
+             33 LOAD_CONST               4 (456)
+             36 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+             39 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+             42 POP_TOP
+&nbsp;
+<i># spojení dvou řetězců</i>
+ 23          43 LOAD_GLOBAL              1 (print)
+             46 LOAD_GLOBAL              2 (add_two_numbers)
+             49 LOAD_CONST               5 ('foo')
+             52 LOAD_CONST               6 ('bar')
+             55 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+             58 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+             61 POP_TOP
+&nbsp;
+<i># konstrukce dvou seznamů s jejich následným spojením</i>
+ 24          62 LOAD_GLOBAL              1 (print)
+             65 LOAD_GLOBAL              2 (add_two_numbers)
+             68 LOAD_CONST               1 (1)
+             71 LOAD_CONST               2 (2)
+             74 LOAD_CONST               7 (3)
+             77 BUILD_LIST               3
+             80 LOAD_CONST               8 (4)
+             83 LOAD_CONST               9 (5)
+             86 LOAD_CONST              10 (6)
+             89 BUILD_LIST               3
+             92 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+             95 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+             98 POP_TOP
+&nbsp;
+<i># konstrukce dvou n-tic s jejich následným spojením</i>
+ 25          99 LOAD_GLOBAL              1 (print)
+            102 LOAD_GLOBAL              2 (add_two_numbers)
+            105 LOAD_CONST              11 ((1, 2, 3))
+            108 LOAD_CONST              12 ((4, 5, 6))
+            111 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+            114 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+            117 POP_TOP
+&nbsp;
+<i># "spojení" dvou instancí třídy Foo</i>
+ 26         118 LOAD_GLOBAL              1 (print)
+            121 LOAD_GLOBAL              2 (add_two_numbers)
+            124 LOAD_FAST                0 (f1)
+            127 LOAD_FAST                1 (f2)
+            130 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+            133 CALL_FUNCTION            1 (1 positional, 0 keyword pair)
+            136 POP_TOP
+&nbsp;
+<i># ukončení funkce main</i>
+            137 LOAD_CONST               0 (None)
+            140 RETURN_VALUE
+</pre>
+
+
+
+<p><a name="k06"></a></p>
+<h2 id="k06">6. Použití deklarace <strong>cdef</strong> namísto <strong>def</strong></h2>
+
+<p>První úpravou našeho zdrojového kódu funkce
+<strong>add_two_numbers</strong>, která povede k&nbsp;menšímu a rychlejšímu
+strojovému (nativnímu) kódu, bude použití klíčového slova <strong>cdef</strong>
+namísto pythonovského <strong>def</strong>. Zdrojový kód uložíme do souboru
+s&nbsp;koncovkou <strong>.pyx</strong> namísto <strong>.py</strong>, a to
+především z&nbsp;toho důvodu, že se již nejedná o běžný kód zpracovatelný
+Pythonem (pro připomenutí: Cython používá nadmnožinu Pythonu zatímco RPython
+jeho podmnožinu). Žádné další úpravy kromě náhrady <strong>s/def/cdef</strong>
+prozatím nebudou provedeny:</p>
+
+<pre>
+cdef <strong>add_two_numbers</strong>(x, y):
+    return x + y
+&nbsp;
+&nbsp;
+z = <strong>add_two_numbers</strong>(123, 456)
+print(z)
+</pre>
+
+<p>Vzhledem k&nbsp;tomu, že v&nbsp;<strong>Makefile</strong> voláme Cython
+s&nbsp;parametrem <strong>-a</strong>, vygeneruje se mj.&nbsp;i HTML stránka,
+na níž je patrné, jak byla naše funkce přeložena do céčka tentokrát. Celý kód
+je již citelně kratší, i když je stále velmi neefektivní: <a class="rs-file
+file-html"
+href="https://i.iinfo.cz/files/root/58/cython-add-numbers-2.html">cython_add_numbers_2</a>.</p>
+
+*** image ***
+<p><i>Obrázek 3: Část HTML souboru &bdquo;add_numbers_2.html&ldquo; vytvořeného
+Cythonem. Žlutě označené řádky opět označují ty bloky kódu, o nichž Cython nemá
+typové informace a které musel přeložit dosti neefektivním způsobem simulujícím
+chování interpretru Pythonu.</i></p>
+
+<p>Hlavička céčkové funkce vzniklé transpřekladem vypadá takto:</p>
+
+<pre>
+static PyObject *<strong>__pyx_f_13add_numbers_2_add_two_numbers</strong>(PyObject *__pyx_v_x, PyObject *__pyx_v_y) {}
+</pre>
+
+<p>Potenciálně neefektivní části kódu:</p>
+
+<ol>
+<li><strong>__Pyx_RefNannyDeclarations</strong> a <strong>__Pyx_RefNannySetupContext()</strong> na začátku funkce</li>
+<li><strong>__Pyx_RefNannyFinishContext()</strong> na konci funkce</li>
+<li>vlastní výpočet je ovšem implementován voláním další funkce <strong>PyNumber_Add(__pyx_v_x, __pyx_v_y)</strong></li>
+</ol>
+
+
+
+<p><a name="k07"></a></p>
+<h2 id="k07">7. Přidání informace o typech parametrů funkce pro součet celých čísel</h2>
+
+<p>První výraznější úpravou, kterou můžeme provést, je přidání informace o
+typech parametrů funkce. Zápis je v&nbsp;tomto případě naprosto stejný, jako
+v&nbsp;klasickém céčku, tj.&nbsp;používá se pořadí <strong>datový_typ
+jméno_parametru</strong>. V&nbsp;našem případě budeme vyžadovat, aby parametry
+byly typu celé číslo, tj.&nbsp;v&nbsp;céčku se jedná o základní typ pojmenovaný
+<strong>int</strong>. Změněná funkce bude vypadat následovně:</p>
+
+<pre>
+cdef <strong>add_two_numbers</strong>(int x, int y):
+    return x + y
+&nbsp;
+&nbsp;
+z = <strong>add_two_numbers</strong>(123, 456)
+print(z)
+</pre>
+
+<p>Pokud se podíváme na vygenerovanou  HTML stránku (<a class="rs-file
+file-html"
+href="https://i.iinfo.cz/files/root/58/cython-add-numbers-3.html">cython_add_numbers_3</a>),
+popř.&nbsp;raději přímo na céčkový kód, uvidíme, že došlo k&nbsp;několika
+zásadním změnám. Zejména se pochopitelně změnila hlavička céčkové funkce
+vzniklé transpřekladem, která nyní vypadá následovně:</p>
+
+<pre>
+static PyObject *<strong>__pyx_f_13add_numbers_3_add_two_numbers</strong>(int __pyx_v_x, int __pyx_v_y) {
+</pre>
+
+*** image ***
+<p><i>Obrázek 4: Část HTML souboru &bdquo;add_numbers_3.html&ldquo; vytvořeného
+Cythonem..</i></p>
+
+<p>Dále se &ndash; pokud prozatím budeme ignorovat kód na začátku a konci
+funkce &ndash; celý výpočet pozměnil, protože se namísto volání
+<strong>PyNumber_Add</strong> již používá běžný součet. Ovšem následně se
+vypočtené celé číslo opět konvertuje na pythonovský objekt s&nbsp;využitím
+<strong>__Pyx_PyInt_From_int</strong>, protože jsme prozatím naschvál
+nespecifikovali návratový typ funkce:</p>
+
+<pre>
+  __pyx_t_1 = <strong>__Pyx_PyInt_From_int</strong>((__pyx_v_x + __pyx_v_y))
+</pre>
+
+<p>Úplný céčkový kód je tedy již nepatrně lepší, ovšem k&nbsp;optimálnosti má
+stále daleko:</p>
+
+<pre>
+static PyObject *<strong>__pyx_f_13add_numbers_3_add_two_numbers</strong>(int __pyx_v_x, int __pyx_v_y) {
+  PyObject *__pyx_r = NULL;
+  __Pyx_RefNannyDeclarations
+  PyObject *__pyx_t_1 = NULL;
+  __Pyx_RefNannySetupContext("add_two_numbers", 0);
+&nbsp;
+  __Pyx_XDECREF(__pyx_r);
+  __pyx_t_1 = <strong>__Pyx_PyInt_From_int</strong>((__pyx_v_x + __pyx_v_y)); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 2, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_1);
+  __pyx_r = __pyx_t_1;
+  __pyx_t_1 = 0;
+  goto __pyx_L0;
+&nbsp;
+  <i>/* function exit code */</i>
+  __pyx_L1_error:;
+  __Pyx_XDECREF(__pyx_t_1);
+  __Pyx_AddTraceback("add_numbers_3.add_two_numbers", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = 0;
+  __pyx_L0:;
+  __Pyx_XGIVEREF(__pyx_r);
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+</pre>
+
+
+
+<p><a name="k08"></a></p>
+<h2 id="k08">8. Přidání informace o návratovém typu funkce pro součet celých čísel</h2>
+
+<p>Další úprava naší funkce se již přímo nabízí &ndash; musíme specifikovat typ
+návratové hodnoty. Pokud totiž tento typ není zadán, považuje Cython za nutné
+vracet <strong>PyObject *</strong>, aby byly výsledky kompatibilní
+s&nbsp;běžnými pythonovskými funkcemi a metodami. Specifikace návratové hodnoty
+se opět provádí stejným způsobem, jako v&nbsp;programovacím jazyku C,
+tj.&nbsp;zápisem příslušného typu <i>před</i> jméno funkce:</p>
+
+<pre>
+cdef int <strong>add_two_numbers</strong>(int x, int y):
+    return x + y
+&nbsp;
+&nbsp;
+z = <strong>add_two_numbers</strong>(123, 456)
+print(z)
+</pre>
+
+<p>Při transpřekladu do céčka získáme i HTML stránku s&nbsp;podrobnějšími
+informacemi o tom, jak byl Cython úspěšný. Tato stránka nyní vypadá <a
+class="rs-file file-html"
+href="https://i.iinfo.cz/files/root/58/cython-add-numbers-4.html">takto</a> a
+z&nbsp;jejího obsahu je patrné, že jsme se již velmi přiblížili k&nbsp;takové
+deklaraci, kterou by použil céčkový programátor (až na prolog a epilog):</p>
+
+<pre>
+static int <strong>__pyx_f_13add_numbers_4_add_two_numbers</strong>(int __pyx_v_x, int __pyx_v_y) {
+  int __pyx_r;
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("add_two_numbers", 0);
+&nbsp;
+  __pyx_r = (__pyx_v_x + __pyx_v_y);
+  goto __pyx_L0;
+&nbsp;
+  <i>/* function exit code */</i>
+  __pyx_L0:;
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+</pre>
+
+*** image ***
+<p><i>Obrázek 5: Část HTML souboru &bdquo;add_numbers_4.html&ldquo; vytvořeného
+Cythonem. Zde již není žádná část těla funkce podbarvena, protože Cython má
+k&nbsp;dispozici všechny potřebné informace o použitých datových
+typech.</i></p>
+
+<p><div class="rs-tip-major">Poznámka: příkaz <strong>goto</strong> bude
+eliminován při překladu céčka do strojového kódu.</div></p>
+
+
+
+<p><a name="k09"></a></p>
+<h2 id="k09">9. Zákaz volání funkcí souvisejících s&nbsp;GILem</h2>
+
+<p>Zbývá nám udělat ještě poslední krok, a to odstranit přípravu takzvaného
+kontextu na začátku těla funkce a naopak odstranění kontextu na jejím konci.
+Jedná se o tuto trojici řádků:</p>
+
+<pre>
+  __Pyx_RefNannyDeclarations
+  __Pyx_RefNannySetupContext("add_two_numbers", 0);
+  ...
+  ...
+  ...
+  __Pyx_RefNannyFinishContext();
+</pre>
+
+<p>Zjednodušeně řečeno &ndash; kontext úzce souvisí s&nbsp;GIL (<i>Global
+Interpreter Lock</i>), který prozatím tvoří neoddělitelnou část klasického
+interpretru CPythonu (ovšem například v&nbsp;Jythonu ho nenajdeme, i když tento
+interpret má zase jiné problémy). GIL je zapotřebí nastavit tehdy, pokud naše
+(nyní vlastně céčková) funkce bude interně volat funkce naprogramované
+v&nbsp;Pythonu popř.&nbsp;funkce z&nbsp;jeho interní knihovny. To my ovšem
+nepotřebujeme &ndash; pouze sčítáme dvě celá čísla a vracíme výsledek součtu
+&ndash; takže můžeme práci s&nbsp;GILem zcela zakázat, a to použitím
+specifikace <strong>nogil</strong>. Finální podoba naší funkce bude vypadat
+následovně:</p>
+
+<pre>
+cdef int <strong>add_two_numbers</strong>(int x, int y) <strong>nogil</strong>:
+    return x + y
+&nbsp;
+&nbsp;
+z = <strong>add_two_numbers</strong>(123, 456)
+print(z)
+</pre>
+
+<p>Pokud se podíváme na výsledek překladu, zjistíme, že až na již výše zmíněné
+<strong>goto</strong> získáme čistý a čitelný céčkový kód:</p>
+
+<pre>
+static int <strong>__pyx_f_13add_numbers_5_add_two_numbers</strong>(int __pyx_v_x, int __pyx_v_y) {
+  int __pyx_r;
+&nbsp;
+  __pyx_r = (__pyx_v_x + __pyx_v_y);
+  goto __pyx_L0;
+&nbsp;
+  <i>/* function exit code */</i>
+  __pyx_L0:;
+  return __pyx_r;
+}
+</pre>
+
+<p>Podívat se můžete i na HTML stránku vygenerovanou při transpřekladu: <a
+class="rs-file file-html"
+href="https://i.iinfo.cz/files/root/58/cython-add-numbers-5.html">cython_add_numbers_5</a>.
+Ta ovšem nyní nebude obsahovat příliš zajímavé informace, protože jsme postupně
+(ve třech krocích) v&nbsp;nadmnožině Pythonu vlastně naprogramovali ekvivalent
+céčkovské funkce.</p>
+
+*** image ***
+<p><i>Obrázek 6: Část HTML souboru &bdquo;add_numbers_5.html&ldquo; vytvořeného
+Cythonem. Zde již není žádná část těla funkce podbarvena, protože Cython má
+k&nbsp;dispozici všechny potřebné informace o použitých datových
+typech.</i></p>
+
+<p><div class="rs-tip-major">Poznámka: všechny tři kroky, které jsme provedli,
+jsou vlastně velmi jednoduché, ale současně jsou nezbytné pro to, aby Cython
+dokázal vygenerovat optimální kód.</div></p>
+
+
+
+<p><a name="k10"></a></p>
+<h2 id="k10">10. Náhrada Pythonovské funkce <strong>print</strong> za funkci <strong>printf</strong></h2>
+
+<p>Odstranění GILu z&nbsp;naší funkce bylo zcela korektní a nebude způsobovat
+žádné nepříjemnosti (pokud kratší a rychlejší kód nebudeme považovat za
+nepříjemnost). Ovšem zajímavé bude zjistit, co se stane ve chvíli, kdy se
+budeme snažit v&nbsp;takto upravené funkci volat jakýkoli Pythonovský kód
+(například <strong>print</strong>). Zkusme si tedy funkci upravit takovým
+způsobem, aby před provedením součtu vypsala hodnotu svého prvního
+parametru:</p>
+
+<pre>
+cdef int <strong>add_two_numbers</strong>(int x, int y) nogil:
+    print(x)
+    return x + y
+&nbsp;
+&nbsp;
+z = add_two_numbers(123, 456)
+print(z)
+</pre>
+
+<p>Při pokusu o transpřeklad s&nbsp;využitím Cythonu dojde k&nbsp;několika
+chybám:</p>
+
+<pre>
+$ <strong>cython -a --embed add_numbers_6.pyx</strong>
+&nbsp;
+Error compiling Cython file:
+------------------------------------------------------------
+...
+cdef int add_two_numbers(int x, int y) nogil:
+    print(x)
+   ^
+------------------------------------------------------------
+&nbsp;
+add_numbers_6.pyx:2:4: Python print statement not allowed without gil
+&nbsp;
+Error compiling Cython file:
+------------------------------------------------------------
+...
+cdef int add_two_numbers(int x, int y) nogil:
+    print(x)
+   ^
+------------------------------------------------------------
+&nbsp;
+add_numbers_6.pyx:2:4: Constructing Python tuple not allowed without gil
+&nbsp;
+Error compiling Cython file:
+------------------------------------------------------------
+...
+cdef int add_two_numbers(int x, int y) nogil:
+    print(x)
+         ^
+------------------------------------------------------------
+&nbsp;
+add_numbers_6.pyx:2:10: Converting to Python object not allowed without gil
+</pre>
+
+<p>Proč tomu tak je? Problém spočívá v&nbsp;tom, že se sice <i>naše</i> funkce
+bez GILu zdánlivě obejde, ovšem běžné Pythonovské funkce a operace z&nbsp;ní
+volané s&nbsp;ním počítají. Proto pokud použijeme <strong>nogil</strong>,
+budeme se muset v&nbsp;tomto bloku obejít bez podpory pythoních funkcí.
+V&nbsp;našem případě to nebude nic složitého &ndash; prostě použijeme funkci
+<strong>printf</strong> ze standardní céčkové knihovny (ta se stejně bude
+linkovat). Řešení může vypadat následovně (pozor na slovo
+<strong>cimport</strong> a ne <strong>import</strong>):</p>
+
+<pre>
+from libc.stdio <strong>cimport</strong> printf
+&nbsp;
+&nbsp;
+cdef int <strong>add_two_numbers</strong>(int x, int y) nogil:
+    printf("%i\n", x)
+    return x + y
+&nbsp;
+&nbsp;
+z = add_two_numbers(123, 456)
+print(z)
+</pre>
+
+<p>Podívejme se na vygenerovaný céčkový kód, který sice působí trochu uměle
+(explicitní <strong>(void)</strong>, generované názvy identifikátorů atd.), ale
+v&nbsp;podstatě stejně, jako ručně psaný kód. Ono zbytečné
+<strong>goto</strong> bude odstraněno optimalizujícím překladačem céčka:</p>
+
+<pre>
+static int <strong>__pyx_f_13add_numbers_7_add_two_numbers</strong>(int __pyx_v_x, int __pyx_v_y) {
+  int __pyx_r;
+&nbsp;
+  (void)(printf(((char const *)"%i\n"), __pyx_v_x));
+&nbsp;
+  __pyx_r = (__pyx_v_x + __pyx_v_y);
+  goto __pyx_L0;
+&nbsp;
+  <i>/* function exit code */</i>
+  __pyx_L0:;
+  return __pyx_r;
+}
+</pre>
+
+
+
+<p><a name="k11"></a></p>
+<h2 id="k11">11. Pythonovské seznamy a céčková pole</h2>
+
+
+
+<p><a name="k12"></a></p>
+<h2 id="k12">12. </h2>
+
+
+
+<p><a name="k13"></a></p>
+<h2 id="k13">13. </h2>
+
+
+
+<p><a name="k14"></a></p>
+<h2 id="k14">14. Předchozí varianta benchmarku a oblasti, kde je možné provést optimalizace</h2>
+
+<p>Nyní již máme k&nbsp;dispozici všechny potřebné informace nutné pro úpravu
+našeho benchmarku pro výpočet Mandelbrotovy množiny. Naším cílem bude dosažení
+rychlosti srovnatelné s&nbsp;variantou naprogramovanou v&nbsp;čistém ANSI C.
+Jen pro připomenutí &ndash; předchozí varianta, s&nbsp;níž jsme <a
+href="https://www.root.cz/clanky/rpython-vs-cython-aneb-dvoji-pristup-k-prekladu-pythonu-do-nativniho-kodu/">končili
+minulý článek</a>, vypadala následovně. Nejedná se o špatné řešení, ovšem již
+nyní je nutné říct, že ho můžeme vylepšit a cca dvojnásobně urychlit:</p>
+
+<pre>
+<i>#!/usr/bin/env python</i>
+<i># vim: set fileencoding=utf-8</i>
+&nbsp;
+import palette_mandmap
+from sys import argv, exit
+&nbsp;
+&nbsp;
+cdef <strong>calc_mandelbrot</strong>(int width, int height, int maxiter, palette):
+    cdef double zx
+    cdef double zy
+    cdef double zx2
+    cdef double zy2
+    cdef double cx
+    cdef double cy
+    cdef int r
+    cdef int g
+    cdef int b
+    cdef int i
+&nbsp;
+    print("P3")
+    print("{w} {h}".format(w=width, h=height))
+    print("255")
+    cy = -1.5
+&nbsp;
+    for y in range(0, height):
+        cx = -2.0
+        for x in range(0, width):
+            zx = 0.0
+            zy = 0.0
+            i = 0
+            while i &lt; maxiter:
+                zx2 = zx * zx
+                zy2 = zy * zy
+                if zx2 + zy2 &gt; 4.0:
+                    break
+                zy = 2.0 * zx * zy + cy
+                zx = zx2 - zy2 + cx
+                i += 1
+&nbsp;
+            r = palette[i][0]
+            g = palette[i][1]
+            b = palette[i][2]
+            print("{r} {g} {b}".format(r=r, g=g, b=b))
+            cx += 3.0/width
+        cy += 3.0/height
+&nbsp;
+&nbsp;
+if __name__ == "__main__":
+    if len(argv) &lt; 4:
+        print("usage: python mandelbrot width height maxiter")
+        exit(1)
+&nbsp;
+    width = int(argv[1])
+    height = int(argv[2])
+    maxiter = int(argv[3])
+    calc_mandelbrot(width, height, maxiter, palette_mandmap.palette)
+</pre>
+
+
+
+<p><a name="k15"></a></p>
+<h2 id="k15">15. Použití pole s&nbsp;barvovou paletou, odstranění kontrol při dělení</h2>
+
+<pre>
+</pre>
+
+
+
+<p><a name="k16"></a></p>
+<h2 id="k16">16. Náhrada <strong>print</strong> za <strong>printf</strong> a odstranění GIL</h2>
+
+<pre>
+</pre>
+
+
+
+<p><a name="k17"></a></p>
+<h2 id="k17">17. Finální podoba benchmarku, srovnání s&nbsp;variantou naprogramovanou v&nbsp;céčku</h2>
+
+<p>Nyní si již můžeme ukázat výslednou verzi benchmarku upraveného takovým
+způsobem, aby byl výsledkem jeho transpřekladu do céčka co nejlepší kód. Zda se
+nám to skutečně povedlo se dozvíme po spuštění benchmarku a <a
+href="#k18">porovnání výsledků s&nbsp;výsledky předchozími</a>. V&nbsp;kódu
+jsou zvýrazněny všechny speciality Cythonu:</p>
+
+<pre>
+<i>#!/usr/bin/env python</i>
+<i># vim: set fileencoding=utf-8</i>
+&nbsp;
+import palette_mandmap
+from sys import argv, exit
+import cython
+from cpython <strong>cimport</strong> array
+from libc.stdio <strong>cimport</strong> printf
+&nbsp;
+&nbsp;
+<strong>@cython.cdivision(True)</strong>
+<strong>cdef</strong> void calc_mandelbrot(<strong>int</strong> width, <strong>int</strong> height, <strong>int</strong> maxiter, <strong>unsigned char *</strong>palette) <strong>nogil</strong>:
+    <strong>cdef double zx</strong>
+    <strong>cdef double zy</strong>
+    <strong>cdef double zx2</strong>
+    <strong>cdef double zy2</strong>
+    <strong>cdef double cx</strong>
+    <strong>cdef double cy</strong>
+    <strong>cdef unsigned char r</strong>
+    <strong>cdef unsigned char g</strong>
+    <strong>cdef unsigned char b</strong>
+    <strong>cdef int i</strong>
+    <strong>cdef int index</strong>
+&nbsp;
+    <strong>printf("P3\n%d %d\n255\n", width, height)</strong>
+    cy = -1.5
+&nbsp;
+    for y in range(0, height):
+        cx = -2.0
+        for x in range(0, width):
+            zx = 0.0
+            zy = 0.0
+            i = 0
+            while i &lt; maxiter:
+                zx2 = zx * zx
+                zy2 = zy * zy
+                if zx2 + zy2 &gt; 4.0:
+                    break
+                zy = 2.0 * zx * zy + cy
+                zx = zx2 - zy2 + cx
+                i += 1
+&nbsp;
+            index = i * 3
+            r = palette[index]
+            g = palette[index+1]
+            b = palette[index+2]
+            <strong>printf("%d %d %d\n", r, g, b)</strong>
+            cx += 3.0/width
+        cy += 3.0/height
+&nbsp;
+&nbsp;
+<strong>cdef array.array palette = array.array('B')</strong>
+&nbsp;
+if __name__ == "__main__":
+&nbsp;
+    if len(argv) &lt; 4:
+        print("usage: python mandelbrot width height maxiter")
+        exit(1)
+&nbsp;
+    for color in palette_mandmap.palette:
+        for component in color:
+            palette.append(component)
+&nbsp;
+    width = int(argv[1])
+    height = int(argv[2])
+    maxiter = int(argv[3])
+    calc_mandelbrot(width, height, maxiter, palette.data.as_uchars)
+</pre>
+
+
+
+<p><a name="k18"></a></p>
+<h2 id="k18">18. Výsledky všech benchmarků</h2>
+
+<table>
+<tr><th>Rozlišení</th><th>CPython 2</th><th>CPython 3</th><th>Jython</th><th>RPython</th><th>ANSI C</th><th>Cython</th><th>Cython (typy)</th><th>Cython (optim)</th></tr>
+</table>
+
+
+
+<p><a name="k19"></a></p>
+<h2 id="k19">18. Repositář s&nbsp;demonstračními příklady</h2>
+
+<p>Všechny demonstrační příklady, které jsme si v&nbsp;dnešním článku ukázali,
+naleznete na adrese <a
+href="https://github.com/tisnik/rpython-examples">https://github.com/tisnik/cython-examples</a>.
+Následují odkazy na jednotlivé příklady (pro jejich spuštění je nutné mít
+nainstalován Cython a jeho závislosti, především tedy překladač céčka a taktéž
+vývojové varianty knihoven pro Python včetně jejich hlavičkových souborů):</p>
+
+<table>
+<tr><th>#</th><th>Příklad</th><th>Adresa</th></tr>
+<tr><td> 1</td><td>add_numbers/Makefile</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/Makefile">https://github.com/tisnik/cython-examples/blob/master/add_numbers/Makefile</a></td></tr>
+<tr><td> 2</td><td>add_numbers/add_numbers_1.py</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_1.py">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_1.py</a></td></tr>
+<tr><td> 3</td><td>add_numbers/add_numbers_2.pyx</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_2.pyx">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_2.pyx</a></td></tr>
+<tr><td> 4</td><td>add_numbers/add_numbers_3.pyx</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_3.pyx">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_3.pyx</a></td></tr>
+<tr><td> 5</td><td>add_numbers/add_numbers_4.pyx</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_4.pyx">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_4.pyx</a></td></tr>
+<tr><td> 6</td><td>add_numbers/add_numbers_5.pyx</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_5.pyx">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_5.pyx</a></td></tr>
+<tr><td> 7</td><td>add_numbers/add_numbers_6.pyx</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_6.pyx">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_6.pyx</a></td></tr>
+<tr><td> 8</td><td>add_numbers/add_numbers_7.pyx</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_7.pyx">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_7.pyx</a></td></tr>
+<tr><td> 9</td><td>add_numbers/add_numbers_dis.py</td><td><a href="https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_dis.py">https://github.com/tisnik/cython-examples/blob/master/add_numbers/add_numbers_dis.py</a></td></tr>
+<tr><td>10</td><td></td><td><a href="https://github.com/tisnik/cython-examples/blob/master/">https://github.com/tisnik/cython-examples/blob/master/add_numbers/</a></td></tr>
+<tr><td>11</td><td></td><td><a href="https://github.com/tisnik/cython-examples/blob/master/">https://github.com/tisnik/cython-examples/blob/master/add_numbers/</a></td></tr>
+</table>
+
+
+
+<p><a name="k20"></a></p>
+<h2 id="k20">20. Odkazy na Internetu</h2>
+
+<ol>
+
+<li>Cython (home page)<br />
+<a href="http://cython.org/">http://cython.org/</a>
+</li>
+
+<li>Cython (wiki)<br />
+<a href="https://github.com/cython/cython/wiki">https://github.com/cython/cython/wiki</a>
+</li>
+
+<li>Cython (Wikipedia)<br />
+<a href="https://en.wikipedia.org/wiki/Cython">https://en.wikipedia.org/wiki/Cython</a>
+</li>
+
+<li>Cython (GitHub)<br />
+<a href="https://github.com/cython/cython">https://github.com/cython/cython</a>
+</li>
+
+<li>Python Implementations: Compilers<br />
+<a href="https://wiki.python.org/moin/PythonImplementations#Compilers">https://wiki.python.org/moin/PythonImplementations#Compilers</a>
+</li>
+
+<li>EmbeddingCython<br />
+<a href="https://github.com/cython/cython/wiki/EmbeddingCython">https://github.com/cython/cython/wiki/EmbeddingCython</a>
+</li>
+
+<li>The Basics of Cython<br />
+<a href="http://docs.cython.org/en/latest/src/tutorial/cython_tutorial.html">http://docs.cython.org/en/latest/src/tutorial/cython_tutorial.html</a>
+</li>
+
+<li>Overcoming Python's GIL with Cython<br />
+<a href="https://lbolla.info/python-threads-cython-gil">https://lbolla.info/python-threads-cython-gil</a>
+</li>
+
+<li>GlobalInterpreterLock<br />
+<a href="https://wiki.python.org/moin/GlobalInterpreterLock">https://wiki.python.org/moin/GlobalInterpreterLock</a>
+</li>
+
+<li>The Magic of RPython<br />
+<a href="https://refi64.com/posts/the-magic-of-rpython.html">https://refi64.com/posts/the-magic-of-rpython.html</a>
+</li>
+
+<li>RPython: Frequently Asked Questions<br />
+<a href="http://rpython.readthedocs.io/en/latest/faq.html">http://rpython.readthedocs.io/en/latest/faq.html</a>
+</li>
+
+<li>RPython’s documentation<br />
+<a href="http://rpython.readthedocs.io/en/latest/index.html">http://rpython.readthedocs.io/en/latest/index.html</a>
+</li>
+
+<li>RPython (Wikipedia)<br />
+<a href="https://en.wikipedia.org/wiki/PyPy#RPython">https://en.wikipedia.org/wiki/PyPy#RPython</a>
+</li>
+
+<li>Getting Started with RPython<br />
+<a href="http://rpython.readthedocs.io/en/latest/getting-started.html">http://rpython.readthedocs.io/en/latest/getting-started.html</a>
+</li>
+
+<li>PyPy (home page)<br />
+<a href="https://pypy.org/">https://pypy.org/</a>
+</li>
+
+<li>PyPy (dokumentace)<br />
+<a href="http://doc.pypy.org/en/latest/">http://doc.pypy.org/en/latest/</a>
+</li>
+
+<li>Localized Type Inference of Atomic Types in Python (2005)<br />
+<a href="http://citeseer.ist.psu.edu/viewdoc/summary?doi=10.1.1.90.3231">http://citeseer.ist.psu.edu/viewdoc/summary?doi=10.1.1.90.3231</a>
+</li>
+
+<li>Numba<br />
+<a href="http://numba.pydata.org/">http://numba.pydata.org/</a>
+</li>
+
+<li>Tutorial: Writing an Interpreter with PyPy, Part 1<br />
+<a href="https://morepypy.blogspot.com/2011/04/tutorial-writing-interpreter-with-pypy.html">https://morepypy.blogspot.com/2011/04/tutorial-writing-interpreter-with-pypy.html</a>
+</li>
+
+<li>List of numerical analysis software<br />
+<a href="https://en.wikipedia.org/wiki/List_of_numerical_analysis_software">https://en.wikipedia.org/wiki/List_of_numerical_analysis_software</a>
+</li>
+
+<li>Pixie: lehký skriptovací jazyk s „kouzelnými“ schopnostmi<br />
+<a href="https://www.root.cz/clanky/pixie-lehky-skriptovaci-jazyk-s-kouzelnymi-schopnostmi/">https://www.root.cz/clanky/pixie-lehky-skriptovaci-jazyk-s-kouzelnymi-schopnostmi/</a>
+</li>
+
+<li>Programovací jazyk Pixie: funkce ze základní knihovny a použití FFI<br />
+<a href="https://www.root.cz/clanky/programovaci-jazyk-pixie-funkce-ze-zakladni-knihovny-a-pouziti-ffi/">https://www.root.cz/clanky/programovaci-jazyk-pixie-funkce-ze-zakladni-knihovny-a-pouziti-ffi/</a>
+</li>
+
+<li>The future can be written in RPython now (článek z&nbsp;roku 2010)<br />
+<a href="http://blog.christianperone.com/2010/05/the-future-can-be-written-in-rpython-now/">http://blog.christianperone.com/2010/05/the-future-can-be-written-in-rpython-now/</a>
+</li>
+
+<li>PyPy is the Future of Python (článek z&nbsp;roku 2010)<br />
+<a href="https://alexgaynor.net/2010/may/15/pypy-future-python/">https://alexgaynor.net/2010/may/15/pypy-future-python/</a>
+</li>
+
+<li>Portal:Python programming<br />
+<a href="https://en.wikipedia.org/wiki/Portal:Python_programming">https://en.wikipedia.org/wiki/Portal:Python_programming</a>
+</li>
+
+<li>RPython Frontend and C Wrapper Generator<br />
+<a href="http://www.codeforge.com/article/383293">http://www.codeforge.com/article/383293</a>
+</li>
+
+<li>PyPy’s Approach to Virtual Machine Construction<br />
+<a href="https://bitbucket.org/pypy/extradoc/raw/tip/talk/dls2006/pypy-vm-construction.pdf">https://bitbucket.org/pypy/extradoc/raw/tip/talk/dls2006/pypy-vm-construction.pdf</a>
+</li>
+
+<li>Tutorial: Writing an Interpreter with PyPy, Part 1<br />
+<a href="https://morepypy.blogspot.com/2011/04/tutorial-writing-interpreter-with-pypy.html">https://morepypy.blogspot.com/2011/04/tutorial-writing-interpreter-with-pypy.html</a>
+</li>
+
+<li>A simple interpreter from scratch in Python (part 1)<br />
+<a href="http://www.jayconrod.com/posts/37/a-simple-interpreter-from-scratch-in-python-part-1">http://www.jayconrod.com/posts/37/a-simple-interpreter-from-scratch-in-python-part-1</a>
+</li>
+
+<li>Brainfuck Interpreter in Python<br />
+<a href="https://helloacm.com/brainfuck-interpreter-in-python/">https://helloacm.com/brainfuck-interpreter-in-python/</a>
+</li>
+
+</ol>
+
+
+
+<p></p><p></p>
+<p><small>Autor: <a href="http://www.fit.vutbr.cz/~tisnovpa">Pavel Tišnovský</a> &nbsp; 2018</small></p>
+</body>
+</html>
+
