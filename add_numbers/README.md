@@ -1,3 +1,5 @@
+# Content of the subdirectory `add_numbers`
+
 More variants of the function to add two numbers:
 
 ```
